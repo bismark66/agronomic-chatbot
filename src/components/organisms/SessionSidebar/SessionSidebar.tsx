@@ -34,12 +34,12 @@ export function SessionSidebar({
       withBorder
       radius="md"
       style={{
-        width: mobile ? '100%' : sidebarCollapsed ? '60px' : '280px',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        transition: 'width 200ms ease',
-        overflow: 'hidden',
+        width: mobile ? "100%" : sidebarCollapsed ? "60px" : "280px",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        transition: "width 200ms ease",
+        overflow: "hidden",
       }}
     >
       <Group p="md" justify="space-between" style={{ flexShrink: 0 }}>
@@ -48,13 +48,13 @@ export function SessionSidebar({
             Chat Sessions
           </Text>
         )}
-        <ActionIcon
+        {/* <ActionIcon
           variant="subtle"
           onClick={handleToggleSidebar}
           size="sm"
         >
           {sidebarCollapsed ? <IconMenu2 size={16} /> : <IconX size={16} />}
-        </ActionIcon>
+        </ActionIcon> */}
       </Group>
 
       {!sidebarCollapsed && (

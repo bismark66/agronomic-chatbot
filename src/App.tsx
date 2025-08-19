@@ -19,7 +19,7 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <MantineProvider theme={agroTheme}>
+      <MantineProvider theme={agroTheme} defaultColorScheme="dark">
         <Notifications />
         <Home />
       </MantineProvider>
