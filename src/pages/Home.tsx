@@ -6,9 +6,10 @@ import { SessionSidebar } from "../components/organisms/SessionSidebar/SessionSi
 import { ChatWindow } from "../components/organisms/ChatWindow/ChatWindow";
 import { PromptInput } from "../components/molecules/PromptInput/PromptInput";
 import { useChatHistory } from "../hooks/useChatHistory";
-import { useLLMResponse } from "../hooks/useLLMResponse";
+import { useLLMResponse, useLLMFollowUp } from "../hooks/useLLMResponse";
 import { Message } from "../types";
 import { notifications } from "@mantine/notifications";
+import { useState, useEffect } from "react";
 
 export function Home() {
   const isMobile = useMediaQuery("(max-width: 768px)");
@@ -24,14 +25,23 @@ export function Home() {
     isCreatingSession,
   } = useChatHistory();
 
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const llmMutation = useLLMResponse();
+  const llmFollowUpMutation = useLLMFollowUp();
+
+  // Reset conversationId when session changes
+  useEffect(() => {
+    setConversationId(null);
+  }, [activeSessionId]);
 
   const handleCreateSession = () => {
     createSession();
+    setConversationId(null);
   };
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSession(sessionId);
+    setConversationId(null); // Reset conversation ID when switching session
   };
 
   const handleEditSession = (sessionId: string, newTitle: string) => {
@@ -45,6 +55,9 @@ export function Home() {
 
   const handleDeleteSession = (sessionId: string) => {
     deleteSession(sessionId);
+    if (sessionId === activeSessionId) {
+      setConversationId(null);
+    }
     notifications.show({
       title: "Session deleted",
       message: "Your chat session has been deleted.",
@@ -77,7 +90,7 @@ export function Home() {
     addMessage(currentSession.id, userMessage);
 
     try {
-      // Get AI response
+      // Get AI response - use follow-up if we have a conversation ID
       const images = files
         ? await Promise.all(
             files.map((file) => {
@@ -89,11 +102,28 @@ export function Home() {
             })
           )
         : undefined;
-      const agroResponse = await llmMutation.mutateAsync({
-        question: message,
-        sessionId: currentSession.id,
-        images,
-      });
+
+      let agroResponse;
+
+      if (conversationId) {
+        agroResponse = await llmFollowUpMutation.mutateAsync({
+          question: message,
+          conversationId,
+          images,
+        });
+      } else {
+        // Use regular mutation for new conversations
+        agroResponse = await llmMutation.mutateAsync({
+          question: message,
+          sessionId: currentSession.id,
+          images,
+        });
+
+        // Store conversation ID for follow-up questions
+        if (agroResponse.conversationId) {
+          setConversationId(agroResponse.conversationId);
+        }
+      }
 
       // Add AI response
       const aiMessage: Message = {
@@ -105,6 +135,7 @@ export function Home() {
         metadata: {
           tableData: agroResponse.tables?.[0],
           alertLevel: agroResponse.alerts?.[0]?.level,
+          conversationId: agroResponse.conversationId,
         },
       };
 
@@ -151,17 +182,18 @@ export function Home() {
     />
   );
 
+  // Combine loading states
+  const isLoading =
+    llmMutation.isPending || llmFollowUpMutation.isPending || isCreatingSession;
+
   return (
     <ChatLayout sidebar={sidebar}>
       <Stack style={{ flex: 1, height: "100%" }} gap="md">
         <ChatWindow
           messages={currentSession?.messages || []}
-          loading={llmMutation.isPending}
+          loading={isLoading}
         />
-        <PromptInput
-          onSubmit={handleSendMessage}
-          loading={llmMutation.isPending || isCreatingSession}
-        />
+        <PromptInput onSubmit={handleSendMessage} loading={isLoading} />
       </Stack>
     </ChatLayout>
   );
