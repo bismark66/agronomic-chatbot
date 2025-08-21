@@ -3,8 +3,14 @@ import { AgroResponse } from "../types";
 import { apiClient } from "../lib/api";
 
 interface SendMessageRequest {
-  question: string; // Changed to match backend expectation
+  question: string;
   sessionId: string;
+  images?: string[];
+}
+
+interface SendFollowUpRequest {
+  question: string;
+  conversationId: string; // Changed from sessionId to conversationId to match backend
   images?: string[];
 }
 
@@ -12,7 +18,9 @@ interface SendMessageRequest {
 interface BackendResponse {
   question: string;
   answer: string;
+  conversationId?: string; // Added for follow-up responses
   timestamp: string;
+  history?: any[]; // Added for conversation history
 }
 
 // Function to transform backend response to AgroResponse
@@ -21,37 +29,96 @@ const transformBackendResponse = (
 ): AgroResponse => {
   return {
     text: backendResponse.answer,
+    conversationId: backendResponse.conversationId, // Pass through conversation ID
+    timestamp: backendResponse.timestamp,
   };
 };
 
 export function useLLMResponse() {
   return useMutation({
     mutationFn: async ({
-      question, // Now matches the interface
+      question,
       sessionId,
       images,
     }: SendMessageRequest): Promise<AgroResponse> => {
       try {
-        // Use your apiClient - now the field names match
         const response = await apiClient.post<BackendResponse>("/chat/ask", {
-          question, // No mapping needed now
-          // sessionId,
-          // images,
+          question,
+          // sessionId can be used as conversationId if needed
+          // conversationId: sessionId, // Uncomment if you want to use sessionId as conversationId
         });
 
         return transformBackendResponse(response.data);
       } catch (error) {
         console.error("Error calling LLM API:", error);
-
-        // Fallback to mock response
-        return mockAgroResponse(question); // Use question instead of message
+        return mockAgroResponse(question);
       }
     },
   });
 }
 
-// Mock response function
-const mockAgroResponse = (question: string): AgroResponse => {
+// New mutation for follow-up questions
+export function useLLMFollowUp() {
+  return useMutation({
+    mutationFn: async ({
+      question,
+      conversationId,
+      images,
+    }: SendFollowUpRequest): Promise<AgroResponse> => {
+      try {
+        const response = await apiClient.post<BackendResponse>(
+          `/chat/follow-up/${conversationId}`,
+          {
+            question,
+          }
+        );
+
+        return transformBackendResponse(response.data);
+      } catch (error) {
+        console.error("Error calling LLM follow-up API:", error);
+        return mockAgroResponse(question);
+      }
+    },
+  });
+}
+
+// Optional: Mutation to get conversation history
+export function useConversationHistory() {
+  return useMutation({
+    mutationFn: async (conversationId: string): Promise<any> => {
+      try {
+        const response = await apiClient.get(`/chat/history/${conversationId}`);
+        return response.data;
+      } catch (error) {
+        console.error("Error fetching conversation history:", error);
+        return { messages: [] };
+      }
+    },
+  });
+}
+
+// Optional: Mutation to clear conversation history
+export function useClearConversation() {
+  return useMutation({
+    mutationFn: async (conversationId: string): Promise<boolean> => {
+      try {
+        const response = await apiClient.delete(
+          `/chat/history/${conversationId}`
+        );
+        return response.data.success;
+      } catch (error) {
+        console.error("Error clearing conversation:", error);
+        return false;
+      }
+    },
+  });
+}
+
+// Mock response function (updated to include conversationId)
+const mockAgroResponse = (
+  question: string,
+  conversationId?: string
+): AgroResponse => {
   const isAboutFertilizer =
     question.toLowerCase().includes("fertilizer") ||
     question.toLowerCase().includes("nutrient");
@@ -61,6 +128,8 @@ const mockAgroResponse = (question: string): AgroResponse => {
 
   let response: AgroResponse = {
     text: `Based on your query about "${question}", I recommend conducting a soil analysis first. This will help determine the specific nutritional needs of your crops and allow for precise fertilizer application.`,
+    conversationId: conversationId || "mock-conversation-id",
+    timestamp: new Date().toISOString(),
   };
 
   if (isAboutFertilizer) {
