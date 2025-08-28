@@ -17,6 +17,7 @@ export interface ChatSession {
   messages: Message[];
   createdAt: Date;
   updatedAt: Date;
+  conversationId?: string;
 }
 
 export interface TableData {
