@@ -9,10 +9,20 @@ import { useChatHistory } from "../hooks/useChatHistory";
 import { useLLMResponse, useLLMFollowUp } from "../hooks/useLLMResponse";
 import { Message } from "../types";
 import { notifications } from "@mantine/notifications";
-import { useState, useEffect } from "react";
+import {
+  BackendConversation,
+  useClearConversationHistory,
+  useDeleteConversation,
+} from "../hooks/useConversationManagement";
+import {
+  useConversationHistory,
+  ConversationHistoryResponse,
+} from "../hooks/useConversationHistory";
 
 export function Home() {
   const isMobile = useMediaQuery("(max-width: 768px)");
+
+  const conversationHistoryMutation = useConversationHistory();
   const {
     sessions,
     currentSession,
@@ -23,25 +33,29 @@ export function Home() {
     addMessage,
     setActiveSession,
     isCreatingSession,
+    clearSessionMessages, // You'll need to add this to your useChatHistory hook
+    loadMessagesIntoSession,
+    updateSessionConversationId,
   } = useChatHistory();
 
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  // const [conversationId, setConversationId] = useState<string | null>(null);
+  // const [selectedBackendConversation, setSelectedBackendConversation] =
+  //   useState<BackendConversation | null>(null);
   const llmMutation = useLLMResponse();
   const llmFollowUpMutation = useLLMFollowUp();
 
-  // Reset conversationId when session changes
-  useEffect(() => {
-    setConversationId(null);
-  }, [activeSessionId]);
+  // New hooks for conversation management
+  const deleteConversationMutation = useDeleteConversation();
+  const clearConversationHistoryMutation = useClearConversationHistory();
 
-  const handleCreateSession = () => {
-    createSession();
-    setConversationId(null);
+  const handleCreateSession = (backendConversationId?: string) => {
+    const newSessionId = createSession(backendConversationId); // Pass conversationId to createSession
+    return newSessionId;
   };
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSession(sessionId);
-    setConversationId(null); // Reset conversation ID when switching session
+    // setConversationId(null);
   };
 
   const handleEditSession = (sessionId: string, newTitle: string) => {
@@ -53,11 +67,31 @@ export function Home() {
     });
   };
 
-  const handleDeleteSession = (sessionId: string) => {
+  const handleDeleteSession = async (sessionId: string) => {
+    // If we have a conversation ID, delete it from the backend too
+    if (currentSession?.conversationId && sessionId === activeSessionId) {
+      try {
+        await deleteConversationMutation.mutateAsync(
+          currentSession.conversationId
+        );
+      } catch (error) {
+        console.error("Failed to delete conversation from backend:", error);
+        // Continue with local deletion even if backend fails
+        notifications.show({
+          title: "Warning",
+          message: "Session deleted locally but failed to delete from server.",
+          color: "yellow",
+        });
+      }
+    }
+
+    // Delete local session
     deleteSession(sessionId);
+
     if (sessionId === activeSessionId) {
       setConversationId(null);
     }
+
     notifications.show({
       title: "Session deleted",
       message: "Your chat session has been deleted.",
@@ -65,12 +99,94 @@ export function Home() {
     });
   };
 
+  const handleClearConversation = async (sessionId: string) => {
+    if (currentSession?.conversationId && sessionId === activeSessionId) {
+      try {
+        await clearConversationHistoryMutation.mutateAsync(
+          currentSession.conversationId
+        );
+      } catch (error) {
+        console.error(
+          "Failed to clear conversation history from backend:",
+          error
+        );
+        notifications.show({
+          title: "Warning",
+          message: "Messages cleared locally but failed to clear from server.",
+          color: "yellow",
+        });
+      }
+    }
+
+    // Clear messages locally
+    // You'll need to implement clearSessionMessages in your useChatHistory hook
+    if (clearSessionMessages) {
+      clearSessionMessages(sessionId);
+    } else {
+      // Fallback: create a new session to effectively clear messages
+      createSession();
+    }
+
+    notifications.show({
+      title: "Conversation cleared",
+      message: "All messages have been cleared.",
+      color: "green",
+    });
+  };
+
+  const handleSelectBackendConversation = async (
+    conversation: BackendConversation
+  ) => {
+    // setSelectedBackendConversation(conversation);
+
+    // Create a new session with the backend conversationId
+    const newSessionId = createSession(conversation.id);
+
+    try {
+      const history: ConversationHistoryResponse =
+        await conversationHistoryMutation.mutateAsync(conversation.id);
+
+      const convertedMessages: Message[] = history.messages.map((msg) => ({
+        id: msg.id,
+        content: msg.content,
+        sender: msg.type === "user" ? "user" : "ai",
+        timestamp: new Date(msg.createdAt),
+        type: "text",
+        metadata: {
+          processingTime: msg.metadata?.processingTime,
+          retrievedDocsCount: msg.metadata?.retrievedDocsCount,
+          messageType: msg.type,
+        },
+      }));
+
+      // Load messages into the newly created session
+      if (loadMessagesIntoSession) {
+        loadMessagesIntoSession(
+          newSessionId, // Use the new session ID
+          convertedMessages,
+          conversation.title || "Backend Conversation"
+        );
+      }
+    } catch (error) {
+      console.error("Failed to load conversation history:", error);
+      notifications.show({
+        title: "Error",
+        message: "Failed to load conversation history",
+        color: "red",
+      });
+    }
+  };
+
+  // Update your handleSendMessage function to use the conversationId:
   const handleSendMessage = async (message: string, files?: FileWithPath[]) => {
     if (!currentSession) {
-      // Create a new session if none exists
-      createSession();
+      const newSessionId = createSession();
+      setActiveSession(newSessionId);
       return;
     }
+
+    // Use currentSession.conversationId instead of the global conversationId
+    const currentConversationId = currentSession.conversationId;
 
     // Add user message
     const userMessage: Message = {
@@ -90,7 +206,6 @@ export function Home() {
     addMessage(currentSession.id, userMessage);
 
     try {
-      // Get AI response - use follow-up if we have a conversation ID
       const images = files
         ? await Promise.all(
             files.map((file) => {
@@ -105,10 +220,12 @@ export function Home() {
 
       let agroResponse;
 
-      if (conversationId) {
+      // FIX: Use currentConversationId instead of conversationId
+      if (currentConversationId) {
+        // Use the backend conversation ID for follow-up
         agroResponse = await llmFollowUpMutation.mutateAsync({
           question: message,
-          conversationId,
+          conversationId: currentConversationId, // Use the current session's conversationId
           images,
         });
       } else {
@@ -119,9 +236,19 @@ export function Home() {
           images,
         });
 
-        // Store conversation ID for follow-up questions
+        // Store conversation ID for follow-up questions if this is a new backend conversation
         if (agroResponse.conversationId) {
-          setConversationId(agroResponse.conversationId);
+          // FIX: Update the current session with the new conversationId
+          // You'll need to add an updateSessionConversationId function to your useChatHistory hook
+          if (updateSessionConversationId) {
+            updateSessionConversationId(
+              currentSession.id,
+              agroResponse.conversationId
+            );
+          } else {
+            // Fallback: set global state (this is not ideal but will work)
+            setConversationId(agroResponse.conversationId);
+          }
         }
       }
 
@@ -178,13 +305,20 @@ export function Home() {
       onSelectSession={handleSelectSession}
       onEditSession={handleEditSession}
       onDeleteSession={handleDeleteSession}
+      onClearConversation={handleClearConversation}
+      onSelectBackendConversation={handleSelectBackendConversation}
+      // currentConversationId={conversationId}
       mobile={isMobile}
     />
   );
 
   // Combine loading states
   const isLoading =
-    llmMutation.isPending || llmFollowUpMutation.isPending || isCreatingSession;
+    llmMutation.isPending ||
+    llmFollowUpMutation.isPending ||
+    isCreatingSession ||
+    deleteConversationMutation.isPending ||
+    clearConversationHistoryMutation.isPending;
 
   return (
     <ChatLayout sidebar={sidebar}>
