@@ -127,7 +127,7 @@ const mockAgroResponse = (
     question.toLowerCase().includes("disease");
 
   let response: AgroResponse = {
-    text: `Based on your query about "${question}", I recommend conducting a soil analysis first. This will help determine the specific nutritional needs of your crops and allow for precise fertilizer application.`,
+    text: `Welcome to the Esoko Agronomic smart bot. Explore our features to get the best agricultural advice.`,
     conversationId: conversationId || "mock-conversation-id",
     timestamp: new Date().toISOString(),
   };
